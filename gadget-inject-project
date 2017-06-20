@@ -1,0 +1,86 @@
+#!/bin/bash
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+SSH_PORT=27182
+GADGET_ADDR=127.0.0.1:$SSH_PORT
+
+PROJECT_DIR="${PROJECT_DIR:-${SCRIPT_DIR}/myproject}"
+OUTPUT_DIR="${OUTPUT_DIR:-${SCRIPT_DIR}/output}"
+
+IMAGE_NAME=gadget-inject-image
+CONTAINER_NAME=gadget-inject-container
+
+function cleanup()
+{
+    docker kill ${CONTAINER_NAME}
+    docker rmi ${IMAGE_NAME} 
+}
+
+echo
+echo "###########################################"
+echo "## GADGET INJECT PROJECT                 ##"
+echo "###########################################"
+echo "PROJECT_DIR=$PROJECT_DIR"
+echo "OUTPUT_DIR=$OUTPUT_DIR"
+
+[[ ! -d "${PROJECT_DIR}" ]] && echo "ERROR: PROJECT_DIR '$PROJECT_DIR' does not exist" && exit 1
+[[ ! -d "${OUTPUT_DIR}" ]] && echo "ERROR: OUTPUT_DIR '$OUTPUT_DIR' does not exist" && exit 1
+
+[[ ! -x "$(which docker)" ]] && echo "ERROR: cannot find docker" && exit 1
+[[ ! -x "$(which gadget)" ]] && echo "ERROR: cannot find gadget" && exit 1
+
+
+echo
+echo "###############################################"
+echo "## cleanup potential leftovers from last run ##"
+echo "###############################################"
+cleanup
+
+echo
+echo "##############################################"
+echo "## build container which emulates a chippro ##"
+echo "##############################################"
+docker build -t ${IMAGE_NAME} ${SCRIPT_DIR}/emulated_dev
+
+echo
+echo "#####################################"
+echo "## start emulated device container ##"
+echo "#####################################"
+docker run -p $SSH_PORT:22 -d --privileged --rm --name ${CONTAINER_NAME} -v $OUTPUT_DIR:/output ${IMAGE_NAME}
+
+# give the container some time to startup and show some entertainment
+for ((C=4; C>=0; C--)) do
+   echo -n "$C..."
+   sleep 1
+done
+echo "GO!"
+
+echo
+echo "################################################"
+echo "## deploy gadget project onto emulated device ##"
+echo "################################################"
+pushd "${PROJECT_DIR}"
+gadget build
+gadget deploy
+popd
+
+echo
+echo "######################"
+echo "## copying data out ##"
+echo "######################"
+docker exec ${CONTAINER_NAME} cp -va --parents /etc/docker /output/
+docker exec ${CONTAINER_NAME} cp -va --parents /var/lib/docker /output/
+docker exec ${CONTAINER_NAME} cp -va --parents /var/lib/gadget /output/
+
+echo
+echo "###################"
+echo "## cleanining up ##"
+echo "###################"
+cleanup
+
+echo
+echo "###########"
+echo "## DONE! ##"
+echo "###########"
+echo
